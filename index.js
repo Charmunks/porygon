@@ -85,12 +85,22 @@ app.command("/echo", async ({ command, ack, respond, client }) => {
   const userInfo = await client.users.info({ user: command.user_id });
   const profile = userInfo.user.profile;
   
+  const text = command.text;
+  
   await client.chat.postMessage({
     channel: command.channel_id,
-    text: command.text,
-    username: profile.display_name || profile.real_name,
-    icon_url: profile.image_192,
-    link_names: true
+    text: text,
+    username: profile.display_name || profile.real_name || userInfo.user.name,
+    icon_url: profile.image_512 || profile.image_192,
+    blocks: [
+      {
+        type: "section",
+        text: {
+          type: "mrkdwn",
+          text: text
+        }
+      }
+    ]
   });
 });
 
