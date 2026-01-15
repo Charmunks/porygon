@@ -89,7 +89,8 @@ app.command("/echo", async ({ command, ack, respond, client }) => {
     channel: command.channel_id,
     text: command.text,
     username: profile.display_name || profile.real_name,
-    icon_url: profile.image_192
+    icon_url: profile.image_192,
+    link_names: true
   });
 });
 
