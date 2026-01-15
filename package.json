@@ -1,0 +1,14 @@
+{
+  "name": "charbot",
+  "version": "1.0.0",
+  "description": "Slack bot that posts daily Last.fm listening stats",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "@slack/bolt": "^3.17.1",
+    "node-cron": "^3.0.3",
+    "dotenv": "^16.4.5"
+  }
+}
