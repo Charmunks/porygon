@@ -13,6 +13,8 @@ const CHANNEL_ID = process.env.CHANNEL_ID;
 const BOT_OWNER_ID = process.env.BOT_OWNER_ID;
 const LASTFM_API_KEY = process.env.LASTFM_API_KEY;
 const LASTFM_USER = process.env.LASTFM_USER;
+const FILESERVER_URL = process.env.FILESERVER_URL;
+const FILESERVER_TOKEN = process.env.FILESERVER_TOKEN;
 
 async function getTopTracksToday() {
   const now = Math.floor(Date.now() / 1000);
@@ -102,6 +104,64 @@ app.command("/echo", async ({ command, ack, respond, client }) => {
       }
     ]
   });
+});
+
+app.event("app_mention", async ({ event, client }) => {
+  if (!isOwner(event.user)) return;
+
+  const text = event.text.replace(/<@[A-Z0-9]+>/g, "").trim();
+  if (!text || !event.files || event.files.length === 0) return;
+
+  const lastSlash = text.lastIndexOf("/");
+  let folder = null;
+  let filename = text;
+
+  if (lastSlash !== -1) {
+    folder = text.substring(0, lastSlash);
+    filename = text.substring(lastSlash + 1);
+  }
+
+  const file = event.files[0];
+
+  try {
+    const fileResponse = await fetch(file.url_private, {
+      headers: { Authorization: `Bearer ${process.env.SLACK_BOT_TOKEN}` }
+    });
+    const fileBuffer = await fileResponse.arrayBuffer();
+
+    const formData = new FormData();
+    formData.append("files", new Blob([fileBuffer]), filename);
+    if (folder) formData.append("folder", folder);
+    formData.append("isPublic", "true");
+
+    const uploadResponse = await fetch(`${FILESERVER_URL}/api/upload`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${FILESERVER_TOKEN}` },
+      body: formData
+    });
+
+    const result = await uploadResponse.json();
+
+    if (result.success) {
+      await client.chat.postMessage({
+        channel: event.channel,
+        text: `Uploaded: ${FILESERVER_URL}/f/${result.files[0].path}`,
+        thread_ts: event.ts
+      });
+    } else {
+      await client.chat.postMessage({
+        channel: event.channel,
+        text: `Upload failed: ${result.error || "Unknown error"}`,
+        thread_ts: event.ts
+      });
+    }
+  } catch (error) {
+    await client.chat.postMessage({
+      channel: event.channel,
+      text: `Upload error: ${error.message}`,
+      thread_ts: event.ts
+    });
+  }
 });
 
 cron.schedule("0 19 * * *", async () => {
