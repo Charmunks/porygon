@@ -107,10 +107,20 @@ app.command("/echo", async ({ command, ack, respond, client }) => {
 });
 
 app.event("app_mention", async ({ event, client }) => {
-  if (!isOwner(event.user)) return;
+  console.log("[upload] app_mention event received", { user: event.user, hasFiles: !!event.files });
+  
+  if (!isOwner(event.user)) {
+    console.log("[upload] user is not owner, ignoring");
+    return;
+  }
 
   const text = event.text.replace(/<@[A-Z0-9]+>/g, "").trim();
-  if (!text || !event.files || event.files.length === 0) return;
+  console.log("[upload] parsed text:", text, "files:", event.files?.length || 0);
+  
+  if (!text || !event.files || event.files.length === 0) {
+    console.log("[upload] no text or files, ignoring");
+    return;
+  }
 
   const lastSlash = text.lastIndexOf("/");
   let folder = null;
@@ -120,32 +130,51 @@ app.event("app_mention", async ({ event, client }) => {
     folder = text.substring(0, lastSlash);
     filename = text.substring(lastSlash + 1);
   }
+  console.log("[upload] folder:", folder, "filename:", filename);
 
   const file = event.files[0];
+  console.log("[upload] file info:", { name: file.name, mimetype: file.mimetype, url: file.url_private });
 
   try {
+    console.log("[upload] fetching file from Slack...");
     const fileResponse = await fetch(file.url_private, {
       headers: { Authorization: `Bearer ${process.env.SLACK_BOT_TOKEN}` }
     });
-    const fileBuffer = await fileResponse.arrayBuffer();
+    
+    if (!fileResponse.ok) {
+      console.log("[upload] failed to fetch from Slack:", fileResponse.status, fileResponse.statusText);
+      throw new Error(`Failed to fetch file from Slack: ${fileResponse.status}`);
+    }
+    
+    const fileBuffer = Buffer.from(await fileResponse.arrayBuffer());
+    console.log("[upload] fetched file, size:", fileBuffer.length);
 
     const formData = new FormData();
-    formData.append("files", new Blob([fileBuffer]), filename);
+    formData.append("files", new Blob([fileBuffer], { type: file.mimetype }), filename);
     if (folder) formData.append("folder", folder);
     formData.append("isPublic", "true");
 
+    console.log("[upload] uploading to:", `${FILESERVER_URL}/api/upload`);
     const uploadResponse = await fetch(`${FILESERVER_URL}/api/upload`, {
       method: "POST",
       headers: { Authorization: `Bearer ${FILESERVER_TOKEN}` },
       body: formData
     });
 
-    const result = await uploadResponse.json();
+    const responseText = await uploadResponse.text();
+    console.log("[upload] server response:", uploadResponse.status, responseText);
+    
+    let result;
+    try {
+      result = JSON.parse(responseText);
+    } catch {
+      throw new Error(`Invalid JSON response: ${responseText}`);
+    }
 
     if (result.success) {
       await client.chat.postMessage({
         channel: event.channel,
-        text: `Uploaded: ${FILESERVER_URL}/f/${result.files[0].path}`,
+        text: `Uploaded: ${FILESERVER_URL}/files/${result.files[0].id}`,
         thread_ts: event.ts
       });
     } else {
@@ -156,6 +185,7 @@ app.event("app_mention", async ({ event, client }) => {
       });
     }
   } catch (error) {
+    console.error("[upload] error:", error);
     await client.chat.postMessage({
       channel: event.channel,
       text: `Upload error: ${error.message}`,
