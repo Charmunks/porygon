@@ -16,6 +16,12 @@ const LASTFM_USER = process.env.LASTFM_USER;
 const FILESERVER_URL = process.env.FILESERVER_URL;
 const FILESERVER_TOKEN = process.env.FILESERVER_TOKEN;
 
+const allowedUploadUsers = new Set([BOT_OWNER_ID]);
+
+function isAllowedUploader(userId) {
+  return allowedUploadUsers.has(userId);
+}
+
 async function getTopTracksToday() {
   const now = Math.floor(Date.now() / 1000);
   const startOfDay = now - (now % 86400);
@@ -106,11 +112,44 @@ app.command("/echo", async ({ command, ack, respond, client }) => {
   });
 });
 
+app.command("/add-allow", async ({ command, ack, respond }) => {
+  await ack();
+  
+  if (!isOwner(command.user_id)) {
+    return respond({ text: "Only the bot owner can add users to the allow list.", response_type: "ephemeral" });
+  }
+  
+  const match = command.text.match(/<@([A-Z0-9]+)\|?[^>]*>/);
+  if (!match) {
+    return respond({ text: "Please mention a user to add. Usage: /add-allow @user", response_type: "ephemeral" });
+  }
+  
+  const userId = match[1];
+  if (allowedUploadUsers.has(userId)) {
+    return respond({ text: `<@${userId}> is already on the allow list.`, response_type: "ephemeral" });
+  }
+  
+  allowedUploadUsers.add(userId);
+  await respond({ text: `Added <@${userId}> to the upload allow list.`, response_type: "ephemeral" });
+});
+
+app.command("/list-allow", async ({ command, ack, respond }) => {
+  await ack();
+  
+  const users = Array.from(allowedUploadUsers).map(id => `<@${id}>`).join("\n");
+  await respond({ text: `*Allowed uploaders:*\n${users}`, response_type: "ephemeral" });
+});
+
 app.event("app_mention", async ({ event, client }) => {
   console.log("[upload] app_mention event received", { user: event.user, hasFiles: !!event.files });
   
-  if (!isOwner(event.user)) {
-    console.log("[upload] user is not owner, ignoring");
+  if (!isAllowedUploader(event.user)) {
+    console.log("[upload] user is not allowed, ignoring");
+    await client.chat.postMessage({
+      channel: event.channel,
+      text: "Unauthorized :loll: Dm Ivie if this is a mistake",
+      thread_ts: event.ts
+    });
     return;
   }
 
