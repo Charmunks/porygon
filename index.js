@@ -23,10 +23,14 @@ function isAllowedUploader(userId) {
 }
 
 async function getTopTracksToday() {
-  const now = Math.floor(Date.now() / 1000);
-  const startOfDay = now - (now % 86400);
+  const now = new Date();
+  const estOffset = -5 * 60;
+  const estNow = new Date(now.getTime() + (now.getTimezoneOffset() + estOffset) * 60000);
+  estNow.setHours(0, 0, 0, 0);
+  const startOfDay = Math.floor(estNow.getTime() / 1000) - (now.getTimezoneOffset() + estOffset) * 60;
+  const nowUnix = Math.floor(Date.now() / 1000);
   
-  const url = `https://ws.audioscrobbler.com/2.0/?method=user.getrecenttracks&user=${LASTFM_USER}&api_key=${LASTFM_API_KEY}&format=json&from=${startOfDay}&to=${now}&limit=200`;
+  const url = `https://ws.audioscrobbler.com/2.0/?method=user.getrecenttracks&user=${LASTFM_USER}&api_key=${LASTFM_API_KEY}&format=json&from=${startOfDay}&to=${nowUnix}&limit=200`;
   
   const response = await fetch(url);
   const data = await response.json();
