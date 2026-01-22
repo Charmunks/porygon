@@ -52,19 +52,55 @@ async function getTopTracksToday() {
     .map(([track, count], i) => `${i + 1}. ${track} (${count} plays)`);
 }
 
+async function getTopArtistsToday() {
+  const now = new Date();
+  const estOffset = -5 * 60;
+  const estNow = new Date(now.getTime() + (now.getTimezoneOffset() + estOffset) * 60000);
+  estNow.setHours(0, 0, 0, 0);
+  const startOfDay = Math.floor(estNow.getTime() / 1000) - (now.getTimezoneOffset() + estOffset) * 60;
+  const nowUnix = Math.floor(Date.now() / 1000);
+  
+  const url = `https://ws.audioscrobbler.com/2.0/?method=user.getrecenttracks&user=${LASTFM_USER}&api_key=${LASTFM_API_KEY}&format=json&from=${startOfDay}&to=${nowUnix}&limit=200`;
+  
+  const response = await fetch(url);
+  const data = await response.json();
+  
+  if (!data.recenttracks || !data.recenttracks.track) {
+    return [];
+  }
+  
+  const artistCounts = {};
+  for (const track of data.recenttracks.track) {
+    if (track["@attr"]?.nowplaying) continue;
+    const artist = track.artist["#text"];
+    artistCounts[artist] = (artistCounts[artist] || 0) + 1;
+  }
+  
+  return Object.entries(artistCounts)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 5)
+    .map(([artist, count], i) => `${i + 1}. ${artist} (${count} plays)`);
+}
+
 async function postTopTracks(channelId, isDaily = false) {
-  const tracks = await getTopTracksToday();
+  const [tracks, artists] = await Promise.all([getTopTracksToday(), getTopArtistsToday()]);
   
   const prefix = isDaily ? "🌙 Hey Ivie! It's 7pm, you should probably give a daily update (if you want to.) Anyways, heres your top songs." : "🎵 Top 5 tracks today";
   
-  if (tracks.length === 0) {
+  if (tracks.length === 0 && artists.length === 0) {
     return app.client.chat.postMessage({
       channel: channelId,
       text: `${prefix}\nNo tracks listened to today for ${LASTFM_USER}`
     });
   }
   
-  const message = `${prefix}\nTop 5 tracks today for ${LASTFM_USER}:\n${tracks.join("\n")}`;
+  let message = `${prefix}\n`;
+  if (tracks.length > 0) {
+    message += `*Top 5 tracks today for ${LASTFM_USER}:*\n${tracks.join("\n")}`;
+  }
+  if (artists.length > 0) {
+    message += `\n\n*Top 5 artists today:*\n${artists.join("\n")}`;
+  }
   
   return app.client.chat.postMessage({
     channel: channelId,
