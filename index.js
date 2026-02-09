@@ -15,11 +15,33 @@ const LASTFM_API_KEY = process.env.LASTFM_API_KEY;
 const LASTFM_USER = process.env.LASTFM_USER;
 const FILESERVER_URL = process.env.FILESERVER_URL;
 const FILESERVER_TOKEN = process.env.FILESERVER_TOKEN;
+const SLACK_USER_TOKEN = process.env.SLACK_USER_TOKEN;
 
 const allowedUploadUsers = new Set([BOT_OWNER_ID]);
 
 function isAllowedUploader(userId) {
   return allowedUploadUsers.has(userId);
+}
+
+async function getNowPlaying() {
+  const url = `https://ws.audioscrobbler.com/2.0/?method=user.getrecenttracks&user=${LASTFM_USER}&api_key=${LASTFM_API_KEY}&format=json&limit=1`;
+  const response = await fetch(url);
+  const data = await response.json();
+
+  if (!data.recenttracks || !data.recenttracks.track || data.recenttracks.track.length === 0) {
+    return null;
+  }
+
+  const track = data.recenttracks.track[0];
+  const isPlaying = !!track["@attr"]?.nowplaying;
+  return {
+    name: track.name,
+    artist: track.artist["#text"],
+    album: track.album?.["#text"] || null,
+    image: track.image?.find(i => i.size === "extralarge")?.["#text"] || track.image?.find(i => i.size === "large")?.["#text"] || null,
+    url: track.url || null,
+    isPlaying
+  };
 }
 
 async function getTopTracksToday() {
@@ -82,7 +104,7 @@ async function getTopArtistsToday() {
     .map(([artist, count], i) => `${i + 1}. ${artist} (${count} plays)`);
 }
 
-async function postTopTracks(channelId, isDaily = false) {
+async function postTopTracks(channelId, isDaily = false, threadTs = null) {
   const [tracks, artists] = await Promise.all([getTopTracksToday(), getTopArtistsToday()]);
   
   const prefix = isDaily ? "🌙 Hey Ivie! It's 7pm, you should probably give a daily update (if you want to.) Anyways, heres your top songs." : "🎵 Top 5 tracks today";
@@ -90,7 +112,8 @@ async function postTopTracks(channelId, isDaily = false) {
   if (tracks.length === 0 && artists.length === 0) {
     return app.client.chat.postMessage({
       channel: channelId,
-      text: `${prefix}\nNo tracks listened to today for ${LASTFM_USER}`
+      text: `${prefix}\nNo tracks listened to today for ${LASTFM_USER}`,
+      ...(threadTs && { thread_ts: threadTs })
     });
   }
   
@@ -104,7 +127,8 @@ async function postTopTracks(channelId, isDaily = false) {
   
   return app.client.chat.postMessage({
     channel: channelId,
-    text: message
+    text: message,
+    ...(threadTs && { thread_ts: threadTs })
   });
 }
 
@@ -112,14 +136,15 @@ function isOwner(userId) {
   return userId === BOT_OWNER_ID;
 }
 
-app.command("/tracknow", async ({ command, ack, respond }) => {
+app.command("/tracknow", async ({ command, ack, respond, body }) => {
   await ack();
   
   if (!isOwner(command.user_id)) {
     return respond({ text: "You don't have permission to use this command.", response_type: "ephemeral" });
   }
   
-  await postTopTracks(command.channel_id);
+  const threadTs = command.text?.trim() || null;
+  await postTopTracks(command.channel_id, false, threadTs);
   await respond({ text: "Posted top tracks!", response_type: "ephemeral" });
 });
 
@@ -270,6 +295,60 @@ app.event("app_mention", async ({ event, client }) => {
       text: `Upload error: ${error.message}`,
       thread_ts: event.ts
     });
+  }
+});
+
+app.message(async ({ message, client }) => {
+  if (message.subtype) return;
+  if (message.user !== BOT_OWNER_ID) return;
+  if (message.text?.trim().toLowerCase() !== ".fm") return;
+  console.log("[fm] .fm triggered");
+
+  try {
+    const track = await getNowPlaying();
+
+    if (!track) {
+      return;
+    }
+
+    const emoji = track.isPlaying ? ":musical_note:" : ":headphones:";
+    const status = track.isPlaying ? "Now playing" : "Last played";
+    const fallback = `${status}: ${track.name} by ${track.artist}`;
+
+    const blocks = [];
+
+    const sectionBlock = {
+      type: "section",
+      text: {
+        type: "mrkdwn",
+        text: `${emoji} *${status}*\n\n*${track.url ? `<${track.url}|${track.name}>` : track.name}*\nby *${track.artist}*${track.album ? `\non _${track.album}_` : ""}`
+      }
+    };
+
+    if (track.image) {
+      sectionBlock.accessory = {
+        type: "image",
+        image_url: track.image,
+        alt_text: track.album || track.name
+      };
+    }
+
+    blocks.push(sectionBlock);
+
+    await client.chat.delete({
+      token: SLACK_USER_TOKEN,
+      channel: message.channel,
+      ts: message.ts
+    }).catch(() => {});
+
+    await client.chat.postMessage({
+      token: SLACK_USER_TOKEN,
+      channel: message.channel,
+      text: fallback,
+      blocks
+    });
+  } catch (error) {
+    console.error("[fm] error:", error);
   }
 });
 
