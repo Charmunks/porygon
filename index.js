@@ -335,12 +335,6 @@ app.message(async ({ message, client }) => {
 
     blocks.push(sectionBlock);
 
-    await client.chat.delete({
-      token: SLACK_USER_TOKEN,
-      channel: message.channel,
-      ts: message.ts
-    }).catch(() => {});
-
     await client.chat.postMessage({
       token: SLACK_USER_TOKEN,
       channel: message.channel,
