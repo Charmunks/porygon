@@ -136,6 +136,71 @@ function isOwner(userId) {
   return userId === BOT_OWNER_ID;
 }
 
+app.command("/lyrics", async ({ command, ack, respond }) => {
+  await ack();
+
+  const args = command.text?.trim();
+  if (!args) {
+    return respond({ text: "Usage: `/lyrics <song name> | <line count>`", response_type: "ephemeral" });
+  }
+
+  const parts = args.split("|").map(s => s.trim());
+  const songQuery = parts[0];
+  const lineCount = parseInt(parts[1], 10) || 10;
+
+  if (!songQuery) {
+    return respond({ text: "Please provide a song name. Usage: `/lyrics <song name> | <line count>`", response_type: "ephemeral" });
+  }
+
+  try {
+    const searchUrl = `https://lrclib.net/api/search?q=${encodeURIComponent(songQuery)}`;
+    const searchResponse = await fetch(searchUrl, {
+      headers: { "User-Agent": "Charbot/1.0 (https://github.com/Charmunks/porygon)" }
+    });
+    const results = await searchResponse.json();
+
+    if (!Array.isArray(results) || results.length === 0) {
+      return respond({ text: `No lyrics found for "${songQuery}".`, response_type: "ephemeral" });
+    }
+
+    const track = results.find(r => r.plainLyrics) || results[0];
+    if (!track.plainLyrics) {
+      return respond({ text: `No lyrics available for "${track.trackName}" by ${track.artistName} (might be instrumental).`, response_type: "ephemeral" });
+    }
+
+    const rawLines = track.plainLyrics.split("\n");
+    const allLines = [];
+    let contentLineCount = 0;
+    for (const line of rawLines) {
+      if (line.trim()) {
+        contentLineCount++;
+        allLines.push(line);
+        if (contentLineCount >= lineCount) break;
+      } else if (allLines.length > 0) {
+        allLines.push("");
+      }
+    }
+    while (allLines.length > 0 && !allLines[allLines.length - 1].trim()) {
+      allLines.pop();
+    }
+    const totalContentLines = rawLines.filter(l => l.trim()).length;
+    const truncated = totalContentLines > lineCount;
+
+    let message = `*${track.trackName}* by *${track.artistName}*`;
+    if (track.albumName) message += ` (_${track.albumName}_)`;
+    message += `\n\n${allLines.join("\n")}`;
+    if (truncated) message += `\n\n_...showing ${lineCount} of ${totalContentLines} lines_`;
+
+    await app.client.chat.postMessage({
+      channel: command.channel_id,
+      text: message
+    });
+  } catch (error) {
+    console.error("[lyrics] error:", error);
+    await respond({ text: `Error fetching lyrics: ${error.message}`, response_type: "ephemeral" });
+  }
+});
+
 app.command("/tracknow", async ({ command, ack, respond, body }) => {
   await ack();
   
