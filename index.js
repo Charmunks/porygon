@@ -363,51 +363,215 @@ app.event("app_mention", async ({ event, client }) => {
   }
 });
 
-app.message(async ({ message, client }) => {
-  if (message.subtype) return;
-  if (message.user !== BOT_OWNER_ID) return;
-  if (message.text?.trim().toLowerCase() !== ".fm") return;
-  console.log("[fm] .fm triggered");
+const POKEAPI_BASE = "https://pokeapi.co/api/v2";
 
-  try {
-    const track = await getNowPlaying();
+async function lookupPokemonInfo(query) {
+  const name = query.toLowerCase().replace(/\s+/g, "-");
 
-    if (!track) {
-      return;
+  const endpoints = [
+    { type: "pokemon", url: `${POKEAPI_BASE}/pokemon/${name}` },
+    { type: "move", url: `${POKEAPI_BASE}/move/${name}` },
+    { type: "ability", url: `${POKEAPI_BASE}/ability/${name}` },
+    { type: "item", url: `${POKEAPI_BASE}/item/${name}` },
+  ];
+
+  for (const endpoint of endpoints) {
+    try {
+      const res = await fetch(endpoint.url);
+      if (!res.ok) continue;
+      const data = await res.json();
+      return { type: endpoint.type, data };
+    } catch {
+      continue;
     }
+  }
+  return null;
+}
 
-    const emoji = track.isPlaying ? ":musical_note:" : ":headphones:";
-    const status = track.isPlaying ? "Now playing" : "Last played";
-    const fallback = `${status}: ${track.name} by ${track.artist}`;
+function formatPokemonInfo(data) {
+  const types = data.types.map(t => t.type.name).join(", ");
+  const abilities = data.abilities.map(a => `${a.ability.name}${a.is_hidden ? " _(hidden)_" : ""}`).join(", ");
+  const stats = data.stats.map(s => `${s.stat.name}: *${s.base_stat}*`).join(" | ");
+  const sprite = data.sprites?.other?.["official-artwork"]?.front_default || data.sprites?.front_default || null;
 
-    const blocks = [];
+  const blocks = [];
+  const section = {
+    type: "section",
+    text: {
+      type: "mrkdwn",
+      text: [
+        `*#${data.id}: ${data.name.replace(/-/g, " ")}*`,
+        `*Type:* ${types}`,
+        `*Abilities:* ${abilities}`,
+        `*Height:* ${(data.height / 10).toFixed(1)}m | *Weight:* ${(data.weight / 10).toFixed(1)}kg`,
+        `*Stats:* ${stats}`,
+      ].join("\n"),
+    },
+  };
+  if (sprite) {
+    section.accessory = { type: "image", image_url: sprite, alt_text: data.name };
+  }
+  blocks.push(section);
+  return { text: `Info: ${data.name}`, blocks };
+}
 
-    const sectionBlock = {
+function formatMoveInfo(data) {
+  const effect = data.effect_entries?.find(e => e.language.name === "en")?.short_effect || "No description available.";
+  const flavorText = data.flavor_text_entries?.find(e => e.language.name === "en")?.flavor_text || null;
+
+  return {
+    text: `Move: ${data.name}`,
+    blocks: [{
       type: "section",
       text: {
         type: "mrkdwn",
-        text: `${emoji} *${status}*\n\n*${track.url ? `<${track.url}|${track.name}>` : track.name}*\nby *${track.artist}*${track.album ? `\non _${track.album}_` : ""}`
+        text: [
+          `*Move: ${data.name.replace(/-/g, " ")}*`,
+          `*Type:* ${data.type?.name || "-"} | *Class:* ${data.damage_class?.name || "-"}`,
+          `*Power:* ${data.power ?? "-"} | *Accuracy:* ${data.accuracy ?? "—"} | *PP:* ${data.pp ?? "-"}`,
+          `*Effect:* ${effect}`,
+          flavorText ? `${flavorText}` : null,
+        ].filter(Boolean).join("\n"),
+      },
+    }],
+  };
+}
+
+function formatAbilityInfo(data) {
+  const effect = data.effect_entries?.find(e => e.language.name === "en")?.short_effect || "No description available.";
+  const flavorText = data.flavor_text_entries?.find(e => e.language.name === "en")?.flavor_text || null;
+  const pokemonList = data.pokemon?.slice(0, 8).map(p => p.pokemon.name.replace(/-/g, " ")).join(", ") || "—";
+
+  return {
+    text: `Ability: ${data.name}`,
+    blocks: [{
+      type: "section",
+      text: {
+        type: "mrkdwn",
+        text: [
+          `*Ability: ${data.name.replace(/-/g, " ")}*`,
+          `*Generation:* ${data.generation?.name || "—"}`,
+          `*Effect:* ${effect}`,
+          flavorText ? `_${flavorText}_` : null,
+          `*Pokemon:* ${pokemonList}${data.pokemon?.length > 8 ? ` (+${data.pokemon.length - 8} more)` : ""}`,
+        ].filter(Boolean).join("\n"),
+      },
+    }],
+  };
+}
+
+function formatItemInfo(data) {
+  const effect = data.effect_entries?.find(e => e.language.name === "en")?.short_effect || "No description available.";
+  const flavorText = data.flavor_text_entries?.find(e => e.language.name === "en")?.text || null;
+  const sprite = data.sprites?.default || null;
+
+  const blocks = [];
+  const section = {
+    type: "section",
+    text: {
+      type: "mrkdwn",
+      text: [
+        `*Item: ${data.name.replace(/-/g, " ")}*`,
+        `*Category:* ${data.category?.name?.replace(/-/g, " ") || "—"}`,
+        data.cost ? `*Cost:* ${data.cost}₽` : null,
+        `*Effect:* ${effect}`,
+        flavorText ? `_${flavorText}_` : null,
+      ].filter(Boolean).join("\n"),
+    },
+  };
+  if (sprite) {
+    section.accessory = { type: "image", image_url: sprite, alt_text: data.name };
+  }
+  blocks.push(section);
+  return { text: `Item: ${data.name}`, blocks };
+}
+
+app.message(async ({ message, client }) => {
+  if (message.subtype) return;
+  const text = message.text?.trim() || "";
+  const lower = text.toLowerCase();
+
+  if (lower === ".fm") {
+    if (message.user !== BOT_OWNER_ID) return;
+    console.log("[fm] .fm triggered");
+
+    try {
+      const track = await getNowPlaying();
+
+      if (!track) {
+        return;
       }
-    };
 
-    if (track.image) {
-      sectionBlock.accessory = {
-        type: "image",
-        image_url: track.image,
-        alt_text: track.album || track.name
+      const emoji = track.isPlaying ? ":musical_note:" : ":headphones:";
+      const status = track.isPlaying ? "Now playing" : "Last played";
+      const fallback = `${status}: ${track.name} by ${track.artist}`;
+
+      const blocks = [];
+
+      const sectionBlock = {
+        type: "section",
+        text: {
+          type: "mrkdwn",
+          text: `${emoji} *${status}*\n\n*${track.url ? `<${track.url}|${track.name}>` : track.name}*\nby *${track.artist}*${track.album ? `\non _${track.album}_` : ""}`
+        }
       };
+
+      if (track.image) {
+        sectionBlock.accessory = {
+          type: "image",
+          image_url: track.image,
+          alt_text: track.album || track.name
+        };
+      }
+
+      blocks.push(sectionBlock);
+
+      await client.chat.postMessage({
+        token: SLACK_USER_TOKEN,
+        channel: message.channel,
+        text: fallback,
+        blocks
+      });
+    } catch (error) {
+      console.error("[fm] error:", error);
     }
+  } else {
+    if (!lower.startsWith(".info ")) return;
+    const query = text.slice(6).trim();
+    console.log(`[debug] query: "${query}"`);
+    if (!query) return;
 
-    blocks.push(sectionBlock);
+    console.log(`[info] .info triggered with query: ${query}`);
 
-    await client.chat.postMessage({
-      token: SLACK_USER_TOKEN,
-      channel: message.channel,
-      text: fallback,
-      blocks
-    });
-  } catch (error) {
-    console.error("[fm] error:", error);
+    try {
+      const result = await lookupPokemonInfo(query);
+
+      if (!result) {
+        await client.chat.postMessage({
+          token: SLACK_USER_TOKEN,
+          channel: message.channel,
+          text: `Nothing found for "${query}". Try a Pokémon, move, ability, or item name.`,
+        });
+        return;
+      }
+
+      let formatted;
+      switch (result.type) {
+        case "pokemon": formatted = formatPokemonInfo(result.data); break;
+        case "move": formatted = formatMoveInfo(result.data); break;
+        case "ability": formatted = formatAbilityInfo(result.data); break;
+        case "item": formatted = formatItemInfo(result.data); break;
+      }
+
+      await client.chat.postMessage({
+        token: SLACK_USER_TOKEN,
+        channel: message.channel,
+        text: formatted.text,
+        blocks: formatted.blocks,
+      });
+    } catch (error) {
+      console.error("[info] error:", error);
+    }
   }
 });
 
