@@ -535,8 +535,7 @@ app.message(async ({ message, client }) => {
     } catch (error) {
       console.error("[fm] error:", error);
     }
-  } else {
-    if (!lower.startsWith(".info ")) return;
+  } else if (lower.startsWith(".info ")) {
     const query = text.slice(6).trim();
     console.log(`[debug] query: "${query}"`);
     if (!query) return;
@@ -571,6 +570,42 @@ app.message(async ({ message, client }) => {
       });
     } catch (error) {
       console.error("[info] error:", error);
+    }
+  } else if (lower.startsWith("!dt ")) {
+    const query = text.slice(4).trim();
+    if (!query) return;
+
+    console.log(`[dt] !dt triggered with query: ${query}`);
+
+    try {
+      const result = await lookupPokemonInfo(query);
+      const threadTs = message.thread_ts || message.ts;
+
+      if (!result) {
+        await client.chat.postMessage({
+          channel: message.channel,
+          text: `Nothing found for "${query}". Try a Pokémon, move, ability, or item name.`,
+          thread_ts: threadTs,
+        });
+        return;
+      }
+
+      let formatted;
+      switch (result.type) {
+        case "pokemon": formatted = formatPokemonInfo(result.data); break;
+        case "move": formatted = formatMoveInfo(result.data); break;
+        case "ability": formatted = formatAbilityInfo(result.data); break;
+        case "item": formatted = formatItemInfo(result.data); break;
+      }
+
+      await client.chat.postMessage({
+        channel: message.channel,
+        text: formatted.text,
+        blocks: formatted.blocks,
+        thread_ts: threadTs,
+      });
+    } catch (error) {
+      console.error("[dt] error:", error);
     }
   }
 });
